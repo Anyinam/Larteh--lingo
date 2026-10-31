@@ -1,0 +1,17 @@
+{
+  "short_name": "Larteh Lingo",
+  "name": "Larteh (Gua) Language Preservation Engine",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0e3e2c",
+  "theme_color": "#135c3e",
+  "display": "standalone",
+  "orientation": "portrait"
+}
+
