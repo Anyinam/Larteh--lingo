@@ -12,13 +12,13 @@ Usage:
 
 Examples:
     # Dry-run slice inspection without uploading
-    python scripts/process_recording.py recordings/dad_days_and_numbers.wav seeds/days_and_numbers.json --dry-run
+    python scripts/process_recording.py "recordings/audio-daysofthe week.wav" seeds/days_of_the_week.json --dry-run
 
     # Slice, upload to Cloudflare R2, and save entries to PostgreSQL
-    python scripts/process_recording.py recordings/session_01.wav seeds/days_and_numbers.json --save-db
+    python scripts/process_recording.py recordings/session_01.wav seeds/days_of_the_week.json --save-db
 
     # Fine-tune silence thresholds for audio with background hum
-    python scripts/process_recording.py session.wav seeds.json --silence-thresh -32 --min-silence 600
+    python scripts/process_recording.py session.wav seeds.json --silence-thresh -38 --min-silence 250
 """
 
 import sys
@@ -176,120 +176,121 @@ def process_and_ingest(
     speaker_override: Optional[str] = None,
 ) -> None:
     """Orchestrates slicing, R2 streaming, and metadata linkage."""
-    # 1. Load inputs
-    metadata = load_metadata_sequence(metadata_path)
-    chunks = slice_recording(
-        audio_path=audio_path,
-        min_silence_len=min_silence_len,
-        silence_thresh=silence_thresh,
-        keep_silence=keep_silence,
-    )
+    # Always create Flask app and establish context so current_app works for uploads
+    flask_app = create_app()
 
-    print(f"\n✂️ Slicing complete: Extracted {len(chunks)} chunks for {len(metadata)} metadata items.")
+    with flask_app.app_context():
+        # 1. Load inputs
+        metadata = load_metadata_sequence(metadata_path)
+        chunks = slice_recording(
+            audio_path=audio_path,
+            min_silence_len=min_silence_len,
+            silence_thresh=silence_thresh,
+            keep_silence=keep_silence,
+        )
 
-    # Alignment diagnostics
-    if len(chunks) != len(metadata):
-        print("\n⚠️  ALIGNMENT MISMATCH DETECTED:")
-        print(f"    Expected: {len(metadata)} items (from {metadata_path.name})")
-        print(f"    Received: {len(chunks)} audio segments (from {audio_path.name})")
-        print("    Tips to calibrate:")
-        print("      - If too many chunks were cut: increase --min-silence (e.g. 700) or decrease --silence-thresh (e.g. -40)")
-        print("      - If words were fused together: decrease --min-silence (e.g. 400) or increase --silence-thresh (e.g. -30)")
-        print("    Proceeding with 1:1 mapping up to minimum length.\n")
+        print(f"\n✂️ Slicing complete: Extracted {len(chunks)} chunks for {len(metadata)} metadata items.")
 
-    limit = min(len(chunks), len(metadata))
+        # Alignment diagnostics
+        if len(chunks) != len(metadata):
+            print("\n⚠️  ALIGNMENT MISMATCH DETECTED:")
+            print(f"    Expected: {len(metadata)} items (from {metadata_path.name})")
+            print(f"    Received: {len(chunks)} audio segments (from {audio_path.name})")
+            print("    Tips to calibrate:")
+            print("      - If too many chunks were cut: increase --min-silence (e.g. 700) or decrease --silence-thresh (e.g. -40)")
+            print("      - If words were fused together: decrease --min-silence (e.g. 400) or increase --silence-thresh (e.g. -30)")
+            print("    Proceeding with 1:1 mapping up to minimum length.\n")
 
-    # Initialize Flask app if DB persistence is requested
-    flask_app = create_app() if (save_db and not dry_run) else None
+        limit = min(len(chunks), len(metadata))
 
-    if save_local:
-        save_local.mkdir(parents=True, exist_ok=True)
-
-    results: List[Dict[str, Any]] = []
-
-    print("\n🚀 Processing & Ingesting Audio Segments:")
-    print("=" * 80)
-    print(f"{'#':<3} | {'Larteh Text':<15} | {'Phonetic':<15} | {'English':<15} | Status")
-    print("=" * 80)
-
-    for i in range(limit):
-        chunk = chunks[i]
-        meta = metadata[i]
-
-        larteh_text: str = str(meta.get("larteh_text", "")).strip()
-        phonetic: str = str(meta.get("phonetic_script", "")).strip()
-        english: str = str(meta.get("english_translation", "")).strip()
-        category_slug: str = str(meta.get("category", "general"))
-        category_name: str = str(meta.get("category_name", category_slug.replace("-", " ").title()))
-        speaker: str = speaker_override or str(meta.get("speaker_name", "Dad"))
-        grammatical_type: str = str(meta.get("grammatical_type", "noun"))
-        cultural_notes: Optional[str] = meta.get("cultural_notes")
-
-        slug_name = slugify(larteh_text) or f"entry_{i+1}"
-        unique_id = uuid.uuid4().hex[:8]
-        filename = f"{slug_name}_{unique_id}.wav"
-        r2_key = f"audio/{category_slug}/{filename}"
-
-        # Export chunk to in-memory WAV buffer (16-bit PCM WAV)
-        wav_buffer = io.BytesIO()
-        chunk.export(wav_buffer, format="wav")
-        wav_buffer.seek(0)
-        chunk_bytes = wav_buffer.getvalue()
-
-        # Optional local export
         if save_local:
-            local_file = save_local / filename
-            with open(local_file, "wb") as f:
-                f.write(chunk_bytes)
+            save_local.mkdir(parents=True, exist_ok=True)
 
-        r2_public_url: Optional[str] = None
-        status = "Dry Run"
+        results: List[Dict[str, Any]] = []
 
-        # Cloudflare R2 Upload
-        if not dry_run:
-            try:
-                r2_public_url = upload_audio_to_r2(
-                    file_obj=chunk_bytes,
-                    filename=r2_key,
-                    content_type="audio/wav",
-                )
-                status = "Uploaded to R2"
-            except Exception as e:
-                status = f"Upload Failed: {e}"
+        print("\n🚀 Processing & Ingesting Audio Segments:")
+        print("=" * 80)
+        print(f"{'#':<3} | {'Larteh Text':<15} | {'Phonetic':<15} | {'English':<15} | Status")
+        print("=" * 80)
 
-        # Database record persistence
-        if save_db and not dry_run and flask_app and r2_public_url:
-            try:
-                persist_lexicon_entry(
-                    app=flask_app,
-                    category_slug=category_slug,
-                    category_name=category_name,
-                    larteh_text=larteh_text,
-                    phonetic=phonetic,
-                    english=english,
-                    grammatical_type=grammatical_type,
-                    speaker=speaker,
-                    cultural_notes=cultural_notes,
-                    r2_url=r2_public_url,
-                )
-                status = "Uploaded + DB Synced"
-            except Exception as e:
-                status = f"DB Sync Error: {e}"
+        for i in range(limit):
+            chunk = chunks[i]
+            meta = metadata[i]
 
-        print(f"{i+1:<3} | {larteh_text:<15} | {phonetic:<15} | {english:<15} | {status}")
-        results.append({
-            "order": i + 1,
-            "larteh_text": larteh_text,
-            "phonetic_script": phonetic,
-            "english_translation": english,
-            "r2_url": r2_public_url,
-            "duration_ms": len(chunk),
-        })
+            larteh_text: str = str(meta.get("larteh", "")).strip()
+            phonetic: str = str(meta.get("phonetic", "")).strip()
+            english: str = str(meta.get("english", "")).strip()
+            category_slug: str = str(meta.get("category", "general"))
+            category_name: str = str(meta.get("category_name", category_slug.replace("-", " ").title()))
+            speaker: str = speaker_override or str(meta.get("speaker_name", "Dad"))
+            grammatical_type: str = str(meta.get("grammatical_type", "noun"))
+            cultural_notes: Optional[str] = meta.get("cultural_notes")
 
-    print("=" * 80)
-    print(f"\n✅ Completed processing {len(results)} audio slices.")
-    if dry_run:
-        print("💡 Dry run complete. Re-run without --dry-run to stream directly to Cloudflare R2.")
+            slug_name = slugify(larteh_text) or f"entry_{i+1}"
+            unique_id = uuid.uuid4().hex[:8]
+            filename = f"{slug_name}_{unique_id}.wav"
+            r2_key = f"audio/{category_slug}/{filename}"
+
+            # Export chunk to in-memory WAV buffer (16-bit PCM WAV)
+            wav_buffer = io.BytesIO()
+            chunk.export(wav_buffer, format="wav")
+            wav_buffer.seek(0)
+            chunk_bytes = wav_buffer.getvalue()
+
+            # Optional local export
+            if save_local:
+                local_file = save_local / filename
+                with open(local_file, "wb") as f:
+                    f.write(chunk_bytes)
+
+            r2_public_url: Optional[str] = None
+            status = "Dry Run"
+
+            # Cloudflare R2 Upload
+            if not dry_run:
+                try:
+                    r2_public_url = upload_audio_to_r2(
+                        file_obj=chunk_bytes,
+                        filename=r2_key,
+                        content_type="audio/wav",
+                    )
+                    status = "Uploaded to R2"
+                except Exception as e:
+                    status = f"Upload Failed: {e}"
+
+            # Database record persistence
+            if save_db and not dry_run and r2_public_url:
+                try:
+                    persist_lexicon_entry(
+                        app=flask_app,
+                        category_slug=category_slug,
+                        category_name=category_name,
+                        larteh_text=larteh_text,
+                        phonetic=phonetic,
+                        english=english,
+                        grammatical_type=grammatical_type,
+                        speaker=speaker,
+                        cultural_notes=cultural_notes,
+                        r2_url=r2_public_url,
+                    )
+                    status = "Uploaded + DB Synced"
+                except Exception as e:
+                    status = f"DB Sync Error: {e}"
+
+            print(f"{i+1:<3} | {larteh_text:<15} | {phonetic:<15} | {english:<15} | {status}")
+            results.append({
+                "order": i + 1,
+                "larteh_text": larteh_text,
+                "phonetic_script": phonetic,
+                "english_translation": english,
+                "r2_url": r2_public_url,
+                "duration_ms": len(chunk),
+            })
+
+        print("=" * 80)
+        print(f"\n✅ Completed processing {len(results)} audio slices.")
+        if dry_run:
+            print("💡 Dry run complete. Re-run without --dry-run to stream directly to Cloudflare R2.")
 
 
 def main():

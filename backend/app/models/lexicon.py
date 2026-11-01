@@ -66,6 +66,11 @@ class LexiconEntry(db.Model):
     speaker_name = db.Column(db.String(100), nullable=False, default="Dad")
     cultural_notes = db.Column(db.Text, nullable=True)
 
+    # ML & Speech Model Pipeline Attributes (Wav2Vec 2.0 / Whisper / TTS)
+    audio_duration_sec = db.Column(db.Float, nullable=True)
+    sample_rate = db.Column(db.Integer, nullable=False, default=16000)
+    is_verified = db.Column(db.Boolean, nullable=False, default=True)
+
     # Timestamps
     created_at = db.Column(
         db.DateTime(timezone=True),
@@ -86,6 +91,9 @@ class LexiconEntry(db.Model):
         audio_url: Optional[str] = None,
         speaker_name: str = "Dad",
         cultural_notes: Optional[str] = None,
+        audio_duration_sec: Optional[float] = None,
+        sample_rate: int = 16000,
+        is_verified: bool = True,
         id: Optional[uuid.UUID] = None,
         created_at: Optional[datetime] = None,
     ):
@@ -99,6 +107,9 @@ class LexiconEntry(db.Model):
         self.audio_url = audio_url
         self.speaker_name = speaker_name.strip() if speaker_name else "Dad"
         self.cultural_notes = cultural_notes.strip() if cultural_notes else None
+        self.audio_duration_sec = audio_duration_sec
+        self.sample_rate = sample_rate
+        self.is_verified = is_verified
         if created_at is not None:
             self.created_at = created_at
 
@@ -116,6 +127,9 @@ class LexiconEntry(db.Model):
             "audio_url": self.audio_url,
             "speaker_name": self.speaker_name,
             "cultural_notes": self.cultural_notes,
+            "audio_duration_sec": self.audio_duration_sec,
+            "sample_rate": self.sample_rate,
+            "is_verified": self.is_verified,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

@@ -13,9 +13,9 @@ from dotenv import load_dotenv
 # Base directory for the backend
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Load .env file from backend root if present
+# Load .env from project root first, then backend root as fallback
+load_dotenv(BASE_DIR.parent / ".env")
 load_dotenv(BASE_DIR / ".env")
-
 
 class Config:
     """Base application configuration shared across all environments."""

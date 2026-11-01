@@ -1,0 +1,9 @@
+[
+  {"larteh": "Idu", "phonetic": "i-du", "english": "Sunday", "category": "days"},
+  {"larteh": "Isum", "phonetic": "i-sum", "english": "Monday", "category": "days"},
+  {"larteh": "Epwɛ", "phonetic": "e-pwɛ", "english": "Tuesday", "category": "days"},
+  {"larteh": "Isu", "phonetic": "i-su", "english": "Wednesday", "category": "days"},
+  {"larteh": "Ibiro", "phonetic": "i-bi-ro", "english": "Thursday", "category": "days"},
+  {"larteh": "Ife", "phonetic": "i-fe", "english": "Friday", "category": "days"},
+  {"larteh": "Yinke", "phonetic": "jin-ke", "english": "Saturday", "category": "days"}
+]
