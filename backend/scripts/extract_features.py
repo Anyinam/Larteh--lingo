@@ -18,6 +18,7 @@ import numpy as np
 from backend.app import create_app
 from backend.app.extensions import db
 from backend.app.models.vocabulary import Vocabulary
+from backend.app.models.vocabulary_recording import VocabularyRecording
 from backend.app.services.ml_features import extract_acoustic_features
 from backend.app.services.storage import download_audio_from_storage
 from sqlalchemy import or_
@@ -47,13 +48,51 @@ def extract_dataset_features(
         if split:
             stmt = stmt.where(Vocabulary.ml_split == split)
 
-        entries = db.session.execute(stmt).scalars()
         count = 0
-        for entry in entries:
-            features = extract_acoustic_features(
-                download_audio_from_storage(entry.audio_url)
+        entries = db.session.execute(stmt).scalars().all()
+        recordings_stmt = (
+            db.select(VocabularyRecording)
+            .join(VocabularyRecording.prompt)
+            .where(
+                VocabularyRecording.audio_key.isnot(None),
+                VocabularyRecording.audio_key != "",
+                VocabularyRecording.larteh.isnot(None),
+                VocabularyRecording.larteh != "",
             )
-            feature_path = output_dir / f"{entry.id}.npz"
+            .order_by(VocabularyRecording.id.asc())
+        )
+        if split:
+            recordings_stmt = recordings_stmt.where(
+                VocabularyRecording.ml_split == split
+            )
+        recordings = db.session.execute(recordings_stmt).scalars().all()
+
+        dataset_items = [
+            (
+                str(entry.id),
+                entry,
+                entry.audio_url,
+                entry.larteh,
+                entry.phonetic,
+                entry.ml_split,
+                None,
+            )
+            for entry in entries
+        ] + [
+            (
+                f"contributor-recording-{recording.id}",
+                recording.prompt,
+                recording.audio_key,
+                recording.larteh,
+                recording.phonetic,
+                recording.ml_split,
+                recording.contributor_id,
+            )
+            for recording in recordings
+        ]
+        for item_key, prompt, audio_key, larteh, phonetic, ml_split, contributor_id in dataset_items:
+            features = extract_acoustic_features(download_audio_from_storage(audio_key))
+            feature_path = output_dir / f"{item_key}.npz"
             np.savez_compressed(
                 feature_path,
                 mfcc=features["mfcc"],
@@ -61,13 +100,15 @@ def extract_dataset_features(
                 frame_times_sec=features["frame_times_sec"],
             )
             manifest.write(json.dumps({
-                "id": entry.id,
+                "id": item_key,
+                "prompt_id": prompt.id,
+                "contributor_id": contributor_id,
                 "features": feature_path.name,
-                "text": entry.larteh,
-                "phonetic": entry.phonetic,
-                "translation": entry.english,
-                "category": entry.category,
-                "split": entry.ml_split,
+                "text": larteh,
+                "phonetic": phonetic,
+                "translation": prompt.english,
+                "category": prompt.category,
+                "split": ml_split,
                 "duration_ms": round(features["duration_sec"] * 1000),
                 "sample_rate": features["sample_rate"],
             }, ensure_ascii=False) + "\n")

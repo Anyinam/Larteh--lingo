@@ -18,6 +18,7 @@ from sqlalchemy import or_
 from backend.app import create_app
 from backend.app.extensions import db
 from backend.app.models.vocabulary import Vocabulary
+from backend.app.models.vocabulary_recording import VocabularyRecording
 
 
 def assign_ml_splits(seed: int = 42) -> dict[str, int]:
@@ -39,10 +40,22 @@ def assign_ml_splits(seed: int = 42) -> dict[str, int]:
             )
             .order_by(Vocabulary.id.asc())
         ).scalars().all()
+        recordings = db.session.execute(
+            db.select(VocabularyRecording)
+            .where(
+                VocabularyRecording.audio_key.isnot(None),
+                VocabularyRecording.audio_key != "",
+                VocabularyRecording.larteh.isnot(None),
+                VocabularyRecording.larteh != "",
+            )
+            .order_by(VocabularyRecording.id.asc())
+        ).scalars().all()
 
-        by_category: dict[str, list[Vocabulary]] = defaultdict(list)
+        by_category: dict[str, list] = defaultdict(list)
         for entry in entries:
             by_category[entry.category].append(entry)
+        for recording in recordings:
+            by_category[recording.prompt.category].append(recording)
 
         counts = {"train": 0, "validation": 0, "test": 0}
         for category, category_entries in by_category.items():
