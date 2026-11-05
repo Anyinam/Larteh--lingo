@@ -7,7 +7,7 @@
 
 The mission of this platform is two-fold:
 1. **Cultural Preservation:** Provide native speakers and the global Ghanaian diaspora with an accessible, mobile-first Progressive Web App (PWA) to record, document, and preserve authentic pronunciations, numbers, days, and oral heritage.
-2. **Speech AI & Dataset Infrastructure:** Collect structured phonetic alignments and lossless voice recordings formatted as open datasets for automatic speech recognition (ASR), translation models, and linguistic research.
+2. **Private research infrastructure:** Store recordings privately while building tools for transcription, linguistic study, and future community-approved research.
 
 ---
 
@@ -98,7 +98,7 @@ The mission of this platform is two-fold:
 | `phonetic_script`| String(255) | Not Null | IPA / phonetic script (e.g., "[e-kɔ]") |
 | `english_translation` | String(255) | Indexed, Not Null | English translation (e.g., "One (1)") |
 | `grammatical_type`| String(50) | Indexed, Not Null | `noun`, `verb`, `cardinal_number`, `day_of_week`, etc. |
-| `audio_url` | String(1024)| Nullable | S3 / R2 or local media endpoint |
+| `audio_url` | String(1024)| Nullable | Private storage object key; never returned by public API |
 | `speaker_name` | String(100) | Not Null, Default 'Dad' | Native speaker attribution |
 | `cultural_notes`| Text | Nullable | Usage context, folklore, and etymology |
 | `created_at` | DateTime(tz) | Not Null, Default NOW() | Timestamp |
@@ -139,8 +139,8 @@ pip install -r requirements.txt
 cp .env.example .env
 # Edit .env to set DATABASE_URL (or leave unset for SQLite development mode)
 
-# Run idempotent database seeding (creates tables, Days of Week, Numbers 1–40)
-python seeds.py
+# Seed Studio prompts (backend/scripts is the only scripts directory)
+python scripts/seed_database.py
 
 # Start Flask development server
 python run.py
@@ -196,7 +196,51 @@ Frontend will be available at `http://localhost:5173`.
     - `speaker_name`: (Optional, defaults to `"Dad"`)
     - `cultural_notes`: (Optional) String
 
+### 3. Studio prompts
+- **`GET /api/studio/next`**: Returns the next pending Vocabulary prompt and overall
+  progress. Returns `404` with a completion message when no pending prompts remain.
+- **`POST /api/studio/upload/<vocab_id>`**: Accepts multipart `audio` plus optional
+  `larteh` and `phonetic` fields, normalizes audio to 16 kHz mono WAV, uploads it,
+  and saves its duration, sample rate, and recording status.
+
+### 4. ML dataset
+- **`GET /api/v1/dataset/vocabulary/manifest`** and
+  **`GET /api/v1/dataset/export`**: Disabled with HTTP `410` while recordings
+  are private. Public lexicon APIs omit audio object keys, and the unauthenticated
+  local media route does not serve recordings.
+
 ---
+
+## 🧠 ML Feature Pipeline
+
+Install backend dependencies with `pip install -r backend/requirements.txt`.
+When upgrading an existing database, run the schema migration once from the
+repository root:
+
+```bash
+python backend/scripts/migrate_vocabulary_ml_fields.py
+```
+
+Recorded prompts default to the `train` split. To reproducibly create an
+approximate 80/10/10 split within each category, run:
+
+```bash
+python backend/scripts/assign_ml_splits.py --seed 42
+```
+
+For authorized, local ML work, create compressed per-recording MFCC and log-mel
+arrays plus a transcript manifest with:
+
+```bash
+python backend/scripts/extract_features.py --output-dir exports/features --split train
+```
+
+The feature command reads audio from configured private R2 storage or local
+development storage and writes one `.npz` file per eligible recording. Each file contains `mfcc`,
+`mel_spectrogram`, and `frame_times_sec` arrays; `manifest.jsonl` maps feature
+files to transcripts and dataset metadata. Treat these generated files as
+private too; do not publish or upload them to a public dataset service without
+the speakers' explicit permission.
 
 ## 🎙️ Audio Recording & PWA Features
 
@@ -205,28 +249,41 @@ The React frontend includes:
 - **Live Visual Equalizer**: Real-time feedback during recording sessions.
 - **Microphone Controls**: Record, Pause, Resume, Stop, Preview, and Re-record.
 - **Phonetic Virtual Keys**: Instant insertion for Ghanaian phonetic symbols (`ɛ`, `ɔ`, `ŋ`, `ɲ`, `ʋ`, `ɖ`, `kp`, `gb`) on mobile touchscreens.
-- **Cloud Object Storage Adapter**: Uploads directly to AWS S3 or Cloudflare R2 with automatic fallback to local storage during offline testing.
+- **Cloud Object Storage Adapter**: Uploads to private Cloudflare R2; local storage is for development/testing only.
+
+### Recording privacy and deployment
+
+- Keep the R2 bucket private: do not enable public bucket access, an `r2.dev`
+  public URL, or a public custom domain. Remove any public bucket policy and
+  review/revoke previously shared URLs. `Cache-Control: private, no-store` does
+  not make a publicly readable bucket private.
+- Configure `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and
+  `R2_BUCKET_NAME` as Render environment variables. Leave
+  `STORAGE_BACKEND=r2` (the default) and do not set a public URL environment
+  variable. Production uploads fail rather than falling back to local disk if
+  private object storage is unavailable or local storage is requested.
+- Render's free web-service filesystem is ephemeral; it is not an authoritative
+  archive and can be lost on redeploy/restart. Use private R2 for recordings
+  and PostgreSQL for metadata. Confirm current Render and Cloudflare plan limits
+  before deployment, since free-tier availability and quotas can change.
 
 ---
 
-## 🇬🇭 Pre-Populated Seed Data (`seeds.py`)
+## 🇬🇭 Studio Prompt Seeding
 
-Running `python seeds.py` populates:
-1. **The 7 Days of the Week**:
-   - `Idu` (`[i-du]`, Sunday)
-   - `Isum` (`[i-sum]`, Monday)
-   - `Epwɛ` (`[e-pwɛ]`, Tuesday)
-   - `Isu` (`[i-su]`, Wednesday)
-   - `Ibiro` (`[i-bi-ro]`, Thursday)
-   - `Ife` (`[i-fe]`, Friday)
-   - `Yinke` (`[jin-ke]`, Saturday)
+All backend utilities and prompt data live in `backend/scripts/`. Run
+`python backend/scripts/seed_database.py` from the repository root to create the
+database tables and add prompts from `backend/scripts/*.json`. Seeding is idempotent:
+records with an existing English prompt are skipped. Each prompt begins with
+empty Larteh and phonetic fields and a `pending` recording status.
 
-2. **Numbers 1 to 40 in Larteh**:
-   - 1–10: `Ekɔ`, `Enyɔ`, `Esa`, `Enɛ`, `Enu`, `Esien`, `Esono`, `Etwie`, `Ekpuno`, `Edu`
-   - 11–19: `Edu n'Ekɔ`, `Edu n'Enyɔ`, ..., `Edu n'Ekpuno`
-   - 20–29: `Aduanyɔ`, `Aduanyɔ n'Ekɔ`, ..., `Aduanyɔ n'Ekpuno`
-   - 30–39: `Aduasa`, `Aduasa n'Ekɔ`, ..., `Aduasa n'Ekpuno`
-   - 40: `Eduenɛ`
+The starter file contains prompts across multiple categories, including cardinal
+numbers from 0 to 100, selected values through 20,000, ordinals, all weekdays
+and months, family, body, food, market, directions, nature, animals, health,
+quantities, and everyday expressions. These
+are elicitation prompts, not validated translations. Review prompts and any
+Twi context with Larteh speakers before treating them as authoritative data;
+the seed deliberately leaves Larteh and phonetic transcriptions blank.
 
 ---
 

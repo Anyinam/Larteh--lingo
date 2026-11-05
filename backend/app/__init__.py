@@ -7,6 +7,7 @@ from flask import Flask, jsonify
 from backend.app.config import config_by_name
 from backend.app.extensions import db, migrate, cors
 from backend.app.routes import api_v1_bp
+from backend.app.routes.studio import studio_bp
 
 
 def create_app(config_name: str = None) -> Flask:
@@ -33,6 +34,7 @@ def create_app(config_name: str = None) -> Flask:
 
     # Register blueprints
     app.register_blueprint(api_v1_bp)
+    app.register_blueprint(studio_bp, url_prefix="/api/studio")
 
     # Health check route
     @app.route("/api/health", methods=["GET"])

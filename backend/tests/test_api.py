@@ -3,8 +3,6 @@ Integration tests for Category, Lexicon, and ML Dataset Export endpoints.
 """
 
 import io
-import json
-import csv
 from pydub import AudioSegment
 from backend.app.extensions import db
 from backend.app.models.category import Category
@@ -72,7 +70,7 @@ def test_lexicon_upload_and_search(client, sample_category):
     assert entry_data["larteh_text"] == "Ekɔ"
     assert entry_data["phonetic_script"] == "[e-kɔ]"
     assert entry_data["english_translation"] == "One (1)"
-    assert entry_data["audio_url"] is not None
+    assert entry_data["audio_url"] is None
 
     search_res = client.get("/api/v1/lexicon?larteh_text=Ekɔ")
     assert search_res.status_code == 200
@@ -93,77 +91,19 @@ def test_ml_audio_resampler():
     assert wav_bytes.startswith(b"RIFF")
 
 
-def test_ml_dataset_export_jsonl(app, client):
-    """Test GET /api/v1/dataset/export with format=jsonl streaming."""
-    with app.app_context():
-        entry1 = LexiconEntry(
-            larteh_text="Idu",
-            phonetic_script="[i-du]",
-            english_translation="Sunday",
-            audio_url="https://media.lartehlingo.org/audio/days/idu.wav",
-            audio_duration_sec=1.12,
-            is_verified=True,
-        )
-        entry2 = LexiconEntry(
-            larteh_text="Isum",
-            phonetic_script="[i-sum]",
-            english_translation="Monday",
-            audio_url="https://media.lartehlingo.org/audio/days/isum.wav",
-            audio_duration_sec=0.95,
-            is_verified=False,  # Unverified
-        )
-        db.session.add_all([entry1, entry2])
-        db.session.commit()
-
-    # 1. Verified only (default)
-    res = client.get("/api/v1/dataset/export?format=jsonl")
-    assert res.status_code == 200
-    assert "application/x-ndjson" in res.content_type
-    lines = [line.strip() for line in res.data.decode("utf-8").split("\n") if line.strip()]
-    assert len(lines) == 1
-    data = json.loads(lines[0])
-    assert data["text"] == "Idu"
-    assert data["phonetic"] == "[i-du]"
-    assert data["translation"] == "Sunday"
-    assert data["duration"] == 1.12
-    assert data["audio"] == "https://media.lartehlingo.org/audio/days/idu.wav"
-
-    # 2. Including unverified
-    res_all = client.get("/api/v1/dataset/export?format=jsonl&verified_only=false")
-    lines_all = [line.strip() for line in res_all.data.decode("utf-8").split("\n") if line.strip()]
-    assert len(lines_all) == 2
+def test_dataset_export_endpoints_are_disabled_for_privacy(client):
+    """Public export routes must never disclose audio URLs or transcripts."""
+    for path in (
+        "/api/v1/dataset/export",
+        "/api/v1/dataset/vocabulary/manifest",
+    ):
+        response = client.get(path)
+        assert response.status_code == 410
+        assert "recordings are private" in response.json["message"]
 
 
-def test_ml_dataset_export_csv(app, client):
-    """Test GET /api/v1/dataset/export with format=csv streaming."""
-    with app.app_context():
-        entry = LexiconEntry(
-            larteh_text="Epwɛ",
-            phonetic_script="[e-pwɛ]",
-            english_translation="Tuesday",
-            audio_url="https://media.lartehlingo.org/audio/days/epwe.wav",
-            audio_duration_sec=1.05,
-            is_verified=True,
-        )
-        db.session.add(entry)
-        db.session.commit()
+def test_local_media_route_does_not_serve_recordings(client):
+    response = client.get("/api/v1/media/audio/greetings/1.wav")
 
-    res = client.get("/api/v1/dataset/export?format=csv")
-    assert res.status_code == 200
-    assert "text/csv" in res.content_type
-    reader = list(csv.reader(io.StringIO(res.data.decode("utf-8"))))
-    assert reader[0] == ["audio", "text", "phonetic", "translation", "duration"]
-    assert reader[1] == [
-        "https://media.lartehlingo.org/audio/days/epwe.wav",
-        "Epwɛ",
-        "[e-pwɛ]",
-        "Tuesday",
-        "1.05",
-    ]
-
-
-def test_ml_dataset_export_invalid_format(client):
-    """Test error handling for unsupported export format."""
-    res = client.get("/api/v1/dataset/export?format=parquet")
-    assert res.status_code == 400
-    assert "Unsupported export format" in res.json["message"]
+    assert response.status_code == 404
+    assert "private" in response.json["message"]

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import AudioRecorderForm from './components/AudioRecorderForm';
+import Studio from './components/Studio';
 import { fetchLexicon, fetchCategories } from './services/api';
 import {
   BookOpen,
@@ -17,6 +18,7 @@ import {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('record'); // 'record' | 'explore'
+  const [recordingMode, setRecordingMode] = useState('studio');
   const [lexicon, setLexicon] = useState([]);
   const [categories, setCategories] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -135,11 +137,41 @@ export default function App() {
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-6 sm:py-8">
         {activeTab === 'record' ? (
           <div>
-            <AudioRecorderForm
-              onEntryCreated={(newEntry) => {
-                setLexicon((prev) => [newEntry, ...prev]);
-              }}
-            />
+            <div className="mb-5 flex flex-wrap justify-center gap-3" aria-label="Recording mode">
+              <button
+                type="button"
+                aria-pressed={recordingMode === 'studio'}
+                onClick={() => setRecordingMode('studio')}
+                className={`rounded-lg px-5 py-3 text-base font-semibold focus:outline-none focus:ring-2 focus:ring-larteh-400 ${
+                  recordingMode === 'studio'
+                    ? 'bg-larteh-600 text-white'
+                    : 'border border-slate-600 bg-slate-900 text-slate-200'
+                }`}
+              >
+                Studio prompts
+              </button>
+              <button
+                type="button"
+                aria-pressed={recordingMode === 'manual'}
+                onClick={() => setRecordingMode('manual')}
+                className={`rounded-lg px-5 py-3 text-base font-semibold focus:outline-none focus:ring-2 focus:ring-larteh-400 ${
+                  recordingMode === 'manual'
+                    ? 'bg-larteh-600 text-white'
+                    : 'border border-slate-600 bg-slate-900 text-slate-200'
+                }`}
+              >
+                Manual entry
+              </button>
+            </div>
+            {recordingMode === 'studio' ? (
+              <Studio />
+            ) : (
+              <AudioRecorderForm
+                onEntryCreated={(newEntry) => {
+                  setLexicon((prev) => [newEntry, ...prev]);
+                }}
+              />
+            )}
           </div>
         ) : (
           /* Lexicon Explorer View */
@@ -268,4 +300,3 @@ export default function App() {
     </div>
   );
 }
-

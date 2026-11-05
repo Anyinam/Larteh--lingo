@@ -1,9 +1,8 @@
 """
 Cloudflare R2 Object Storage Service for Larteh Audio Blobs.
 
-Provides an enterprise-grade, S3-compatible interface for storing lossless audio
-recordings (.wav / .webm) in Cloudflare R2 with automatic CDN URL generation,
-lifecycle deletion, and local fallback for offline development.
+Provides an S3-compatible interface for private audio storage in Cloudflare R2,
+lifecycle deletion, and local fallback for development and testing.
 """
 
 import os
@@ -141,20 +140,29 @@ class CloudflareR2Storage:
             content_type: MIME type for the audio blob.
 
         Returns:
-            str: Full public URL for the uploaded audio (e.g. 'https://media.lartehlingo.org/audio/...').
+            str: Private object key used to retrieve the stored audio from the backend.
         """
         # Clean destination key path
         clean_key = filename.lstrip("/")
         self.validate_audio(clean_key, content_type)
 
         bucket_name = current_app.config.get("R2_BUCKET_NAME", "larteh-lingo-audio")
-        public_domain = current_app.config.get("R2_PUBLIC_DOMAIN")
-
-        # Fallback to local storage if R2 is not configured or STORAGE_BACKEND == 'local'
+        # Local storage is restricted to development and testing.
         backend = current_app.config.get("STORAGE_BACKEND", "r2")
-        if backend == "local" or not self.is_configured():
+        if backend == "local":
+            if not (current_app.testing or current_app.debug):
+                raise R2ConfigurationError(
+                    "Local audio storage is not permitted in production. Configure private R2 storage."
+                )
             logger.info("R2 not active or storage backend is local. Persisting to local disk fallback.")
             return self._save_to_local_fallback(file_obj, clean_key)
+        if not self.is_configured():
+            if current_app.testing or current_app.debug:
+                logger.info("R2 is not configured. Persisting to local disk in development.")
+                return self._save_to_local_fallback(file_obj, clean_key)
+            raise R2ConfigurationError(
+                "Private object storage is not configured. Set the R2 endpoint and credentials."
+            )
 
         client = self.get_client()
         if not client:
@@ -178,21 +186,11 @@ class CloudflareR2Storage:
                 Key=clean_key,
                 ExtraArgs={
                     "ContentType": content_type,
-                    "CacheControl": "public, max-age=31536000, immutable",
+                    "CacheControl": "private, no-store",
                 },
             )
-            logger.info(f"Successfully uploaded audio to R2 bucket '{bucket_name}' key '{clean_key}'")
-
-            # Construct public CDN URL
-            if public_domain:
-                return f"{public_domain.rstrip('/')}/{clean_key}"
-
-            # Fallback to direct R2 endpoint path if custom public domain is not yet mapped
-            endpoint_url = current_app.config.get("R2_ENDPOINT_URL")
-            if endpoint_url:
-                return f"{endpoint_url.rstrip('/')}/{bucket_name}/{clean_key}"
-
-            return f"https://{bucket_name}.r2.cloudflarestorage.com/{clean_key}"
+            logger.info("Stored private audio object '%s' in R2 bucket '%s'", clean_key, bucket_name)
+            return clean_key
 
         except (ClientError, BotoCoreError) as err:
             logger.error(f"Cloudflare R2 upload error for key '{clean_key}': {err}")
@@ -248,6 +246,57 @@ class CloudflareR2Storage:
             logger.error(f"Failed to delete '{object_key}' from R2: {err}")
             raise R2StorageError(f"Cloudflare R2 deletion failed: {str(err)}") from err
 
+    def download_audio(self, filename_or_url: str) -> bytes:
+        """Read a stored audio object from local storage or Cloudflare R2."""
+        if not filename_or_url:
+            raise ValueError("An audio URL or object key is required.")
+
+        parsed = urlparse(filename_or_url)
+        object_key = parsed.path.lstrip("/") if parsed.scheme else filename_or_url.lstrip("/")
+        local_prefix = "api/v1/media/"
+        if object_key.startswith(local_prefix):
+            object_key = object_key[len(local_prefix):]
+
+        use_local_storage = current_app.config.get("STORAGE_BACKEND", "r2") == "local"
+        use_local_fallback = object_key.startswith("audio/") and not self.is_configured()
+        if use_local_storage or use_local_fallback:
+            local_root = Path(current_app.config["LOCAL_UPLOAD_FOLDER"]).resolve()
+            local_path = (local_root / object_key).resolve()
+            if not local_path.is_relative_to(local_root):
+                raise ValueError("Audio object key resolves outside the local upload directory.")
+            try:
+                return local_path.read_bytes()
+            except OSError as err:
+                raise R2StorageError(f"Unable to read local audio object '{object_key}'.") from err
+
+        bucket_name = current_app.config.get("R2_BUCKET_NAME", "larteh-lingo-audio")
+        endpoint = current_app.config.get("R2_ENDPOINT_URL")
+        if endpoint and parsed.netloc == urlparse(endpoint).netloc:
+            bucket_prefix = f"{bucket_name}/"
+            if object_key.startswith(bucket_prefix):
+                object_key = object_key[len(bucket_prefix):]
+        public_domain = current_app.config.get("R2_PUBLIC_DOMAIN")
+        if public_domain:
+            public_url = urlparse(public_domain)
+            if parsed.netloc == public_url.netloc:
+                public_prefix = public_url.path.strip("/")
+                if public_prefix and object_key.startswith(f"{public_prefix}/"):
+                    object_key = object_key[len(public_prefix) + 1:]
+
+        if not self.is_configured():
+            raise R2ConfigurationError("Cloudflare R2 is not configured for audio downloads.")
+
+        client = self.get_client()
+        if client is None:
+            raise R2ConfigurationError("Unable to initialize Cloudflare R2 client.")
+
+        try:
+            response = client.get_object(Bucket=bucket_name, Key=object_key)
+            return response["Body"].read()
+        except (ClientError, BotoCoreError) as err:
+            logger.error("Failed to download audio object '%s' from R2: %s", object_key, err)
+            raise R2StorageError(f"Cloudflare R2 audio download failed: {err}") from err
+
     def _save_to_local_fallback(self, file_obj: Union[BinaryIO, bytes, io.BytesIO], key: str) -> str:
         """Persist audio blob to local disk when R2 is offline or in development."""
         local_base = Path(current_app.config["LOCAL_UPLOAD_FOLDER"])
@@ -263,7 +312,7 @@ class CloudflareR2Storage:
             with open(dest_path, "wb") as f:
                 f.write(file_obj.read())
 
-        return f"/api/v1/media/{key}"
+        return key
 
 
 # ---------------------------------------------------------------------------
@@ -287,3 +336,8 @@ def upload_audio_to_r2(
 def delete_audio_from_r2(filename_or_url: str) -> bool:
     """Convenience wrapper for CloudflareR2Storage.delete_audio_from_r2."""
     return cloudflare_storage.delete_audio_from_r2(filename_or_url)
+
+
+def download_audio_from_storage(filename_or_url: str) -> bytes:
+    """Convenience wrapper for downloading stored audio bytes."""
+    return cloudflare_storage.download_audio(filename_or_url)

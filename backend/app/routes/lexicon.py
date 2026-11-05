@@ -3,13 +3,9 @@ Lexicon Blueprint: Audio Ingestion to Cloudflare R2, Querying, and Management.
 """
 
 import os
-import re
 import json
 import uuid
-from pathlib import Path
-from typing import Tuple
-from flask import Blueprint, request, jsonify, current_app, send_from_directory
-from werkzeug.utils import secure_filename
+from flask import Blueprint, request, jsonify, current_app
 from sqlalchemy import or_
 
 from backend.app.extensions import db
@@ -24,6 +20,13 @@ from backend.app.services.storage import (
 from backend.app.utils.validators import validate_audio_file
 
 lexicon_bp = Blueprint("lexicon", __name__)
+
+
+def _serialize_public_entry(entry: LexiconEntry) -> dict:
+    """Serialize lexicon metadata without exposing private audio object keys."""
+    data = entry.to_dict()
+    data["audio_url"] = None
+    return data
 
 
 def generate_audio_storage_key(larteh_text: str, category_slug: str, original_filename: str) -> str:
@@ -99,7 +102,7 @@ def get_lexicon():
 
     return jsonify({
         "status": "success",
-        "data": [entry.to_dict() for entry in paginated.items],
+        "data": [_serialize_public_entry(entry) for entry in paginated.items],
         "pagination": {
             "page": paginated.page,
             "per_page": paginated.per_page,
@@ -120,7 +123,7 @@ def get_lexicon_entry(entry_id: uuid.UUID):
 
     return jsonify({
         "status": "success",
-        "data": entry.to_dict(),
+        "data": _serialize_public_entry(entry),
     }), 200
 
 
@@ -254,7 +257,7 @@ def upload_lexicon_entry():
     return jsonify({
         "status": "success",
         "message": "Lexicon entry created successfully.",
-        "data": entry.to_dict(),
+        "data": _serialize_public_entry(entry),
     }), 201
 
 
@@ -285,8 +288,8 @@ def delete_lexicon_entry(entry_id: uuid.UUID):
 
 @lexicon_bp.route("/media/<path:filename>", methods=["GET"])
 def serve_local_media(filename: str):
-    """
-    Serve uploaded audio assets when running with local storage fallback.
-    """
-    upload_root = Path(current_app.config["LOCAL_UPLOAD_FOLDER"])
-    return send_from_directory(upload_root, filename)
+    """Keep local recording blobs private; no unauthenticated media serving."""
+    return jsonify({
+        "status": "error",
+        "message": "Audio media is private and is not served publicly.",
+    }), 404
