@@ -197,11 +197,15 @@ Frontend will be available at `http://localhost:5173`.
     - `cultural_notes`: (Optional) String
 
 ### 3. Studio prompts
-- **`GET /api/studio/next`**: Returns the next pending Vocabulary prompt and overall
-  progress. Returns `404` with a completion message when no pending prompts remain.
-- **`POST /api/studio/upload/<vocab_id>`**: Accepts multipart `audio` plus optional
-  `larteh` and `phonetic` fields, normalizes audio to 16 kHz mono WAV, uploads it,
-  and saves its duration, sample rate, and recording status.
+- **`GET /api/studio/next`**: Requires an `X-Contributor-ID` UUID header and returns
+  the next prompt not yet recorded by that browser, personal progress, and
+  family-wide prompt coverage. Returns `404` when that contributor has completed
+  the prompt set.
+- **`POST /api/studio/upload/<vocab_id>`**: Requires the same contributor header
+  and accepts multipart `audio` plus optional `larteh` and `phonetic` fields.
+  Audio is normalized to 16 kHz mono WAV and stored as a separate private
+  recording per contributor and prompt. Duplicate submissions by that browser
+  are rejected with `409`.
 
 ### 4. ML dataset
 - **`GET /api/v1/dataset/vocabulary/manifest`** and
@@ -221,6 +225,9 @@ repository root:
 python backend/scripts/migrate_vocabulary_ml_fields.py
 ```
 
+This also creates the new `vocabulary_recordings` table used for per-contributor
+Studio progress.
+
 Recorded prompts default to the `train` split. To reproducibly create an
 approximate 80/10/10 split within each category, run:
 
@@ -235,8 +242,9 @@ arrays plus a transcript manifest with:
 python backend/scripts/extract_features.py --output-dir exports/features --split train
 ```
 
-The feature command reads audio from configured private R2 storage or local
-development storage and writes one `.npz` file per eligible recording. Each file contains `mfcc`,
+The feature command reads legacy recordings and contributor-specific recordings
+from configured private R2 storage or local development storage and writes one
+`.npz` file per eligible recording. Each file contains `mfcc`,
 `mel_spectrogram`, and `frame_times_sec` arrays; `manifest.jsonl` maps feature
 files to transcripts and dataset metadata. Treat these generated files as
 private too; do not publish or upload them to a public dataset service without
@@ -253,6 +261,17 @@ The React frontend includes:
 
 ### Recording privacy and deployment
 
+- Before either Studio or manual recording is available, the frontend requires
+  the recorder to review and accept the recording consent. The consent explains
+  private storage, project access, voluntary participation, and that future
+  external sharing or commercial licensing needs separate permission.
+- The Studio link can be shared with family contributors. Each browser has an
+  anonymous contributor ID stored locally, so each relative can record every
+  prompt once and resume on that browser later. No email or name is collected;
+  another browser/device or cleared browser data starts separate progress.
+  The Studio shows personal progress and family-wide prompt coverage. Separate
+  recordings are stored per contributor, and duplicate submissions from the
+  same contributor are rejected.
 - Keep the R2 bucket private: do not enable public bucket access, an `r2.dev`
   public URL, or a public custom domain. Remove any public bucket policy and
   review/revoke previously shared URLs. `Cache-Control: private, no-store` does
@@ -262,6 +281,11 @@ The React frontend includes:
   `STORAGE_BACKEND=r2` (the default) and do not set a public URL environment
   variable. Production uploads fail rather than falling back to local disk if
   private object storage is unavailable or local storage is requested.
+- Use the Neon `production` branch for PostgreSQL and set Render's backend
+  `DATABASE_URL` to Neon's pooled connection URL. Locally, the Neon CLI writes
+  `DATABASE_URL` and `DATABASE_URL_UNPOOLED` to the root `.env.local`; the Flask
+  config loads that ignored file. Use the unpooled URL for schema migrations
+  and seeding, and keep both URLs out of source control.
 - Render's free web-service filesystem is ephemeral; it is not an authoritative
   archive and can be lost on redeploy/restart. Use private R2 for recordings
   and PostgreSQL for metadata. Confirm current Render and Cloudflare plan limits
@@ -277,10 +301,11 @@ database tables and add prompts from `backend/scripts/*.json`. Seeding is idempo
 records with an existing English prompt are skipped. Each prompt begins with
 empty Larteh and phonetic fields and a `pending` recording status.
 
-The starter file contains prompts across multiple categories, including cardinal
-numbers from 0 to 100, selected values through 20,000, ordinals, all weekdays
-and months, family, body, food, market, directions, nature, animals, health,
-quantities, and everyday expressions. These
+The starter files contain more than 2,200 elicitation prompts across multiple
+categories, including cardinal numbers from 0 through 250 and selected larger
+values up to 100,000, ordinals, all weekdays and months, family, body, food,
+farming, cooking, market, directions, community work, travel, nature, animals,
+health, quantities, and everyday expressions. These
 are elicitation prompts, not validated translations. Review prompts and any
 Twi context with Larteh speakers before treating them as authoritative data;
 the seed deliberately leaves Larteh and phonetic transcriptions blank.

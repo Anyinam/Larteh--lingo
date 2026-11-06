@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.extensions import db
 
@@ -33,6 +33,11 @@ class Vocabulary(db.Model):
     )
     duration_ms: Mapped[Optional[int]] = mapped_column(db.Integer, nullable=True)
     sample_rate: Mapped[int] = mapped_column(db.Integer, nullable=False, default=16000)
+    recordings: Mapped[list["VocabularyRecording"]] = relationship(
+        back_populates="prompt",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
     def __init__(
         self,

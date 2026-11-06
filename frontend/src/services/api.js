@@ -4,7 +4,8 @@
  * Facilitates REST interactions with Flask `/api/v1` backend endpoints.
  */
 
-const API_BASE = import.meta.env.VITE_API_URL || '/api/v1';
+const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || '';
+const API_BASE = import.meta.env.VITE_API_URL || `${API_ORIGIN}/api/v1`;
 
 export async function fetchCategories() {
   const response = await fetch(`${API_BASE}/categories`);
@@ -60,4 +61,3 @@ export async function uploadLexiconEntry(formData) {
 
   return await response.json();
 }
-

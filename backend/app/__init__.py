@@ -27,7 +27,12 @@ def create_app(config_name: str = None) -> Flask:
             r"/api/*": {
                 "origins": app.config.get("CORS_ORIGINS", "*"),
                 "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-                "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+                "allow_headers": [
+                    "Content-Type",
+                    "Authorization",
+                    "X-Requested-With",
+                    "X-Contributor-ID",
+                ],
             }
         },
     )
@@ -64,4 +69,3 @@ def create_app(config_name: str = None) -> Flask:
         os.makedirs(app.config["LOCAL_UPLOAD_FOLDER"], exist_ok=True)
 
     return app
-

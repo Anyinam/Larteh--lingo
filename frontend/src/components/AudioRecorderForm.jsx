@@ -179,6 +179,7 @@ export default function AudioRecorderForm({ onEntryCreated }) {
         'Unable to access microphone. Please grant audio permissions in your browser.'
       );
     }
+
   };
 
   const pauseRecording = () => {
@@ -672,4 +673,3 @@ export default function AudioRecorderForm({ onEntryCreated }) {
     </div>
   );
 }
-

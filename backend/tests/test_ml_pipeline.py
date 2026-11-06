@@ -10,6 +10,7 @@ from sqlalchemy import inspect, text
 
 from backend.app.extensions import db
 from backend.app.models.vocabulary import Vocabulary
+from backend.app.models.vocabulary_recording import VocabularyRecording
 from backend.app.services.ml_features import extract_acoustic_features
 from backend.app.services.storage import (
     R2ConfigurationError,
@@ -108,6 +109,37 @@ def test_split_assignment_is_deterministic_and_category_stratified(app, monkeypa
         } == {"train", "validation", "test"}
 
 
+def test_contributor_recordings_are_included_in_feature_pipeline(app, tmp_path, monkeypatch):
+    with app.app_context():
+        prompt = Vocabulary(english="Good morning", category="greetings")
+        db.session.add(prompt)
+        db.session.flush()
+        db.session.add(VocabularyRecording(
+            vocabulary_id=prompt.id,
+            contributor_id="00000000-0000-4000-8000-000000000001",
+            audio_key="audio/greetings/1/anonymous.wav",
+            larteh="Eko",
+            phonetic="[e-kɔ]",
+        ))
+        db.session.commit()
+
+    monkeypatch.setattr(extraction_script, "create_app", lambda: app)
+    monkeypatch.setattr(
+        extraction_script,
+        "download_audio_from_storage",
+        lambda audio_key: _wav_recording(),
+    )
+    count = extraction_script.extract_dataset_features(tmp_path, "train")
+
+    assert count == 1
+    with np.load(tmp_path / "contributor-recording-1.npz") as features:
+        assert features["mfcc"].shape[1] == 13
+    manifest = json.loads((tmp_path / "manifest.jsonl").read_text().splitlines()[0])
+    assert manifest["prompt_id"] == 1
+    assert manifest["contributor_id"] == "00000000-0000-4000-8000-000000000001"
+    assert manifest["text"] == "Eko"
+
+
 def test_local_audio_download_reads_media_url_and_rejects_traversal(app, tmp_path):
     with app.app_context():
         app.config["LOCAL_UPLOAD_FOLDER"] = str(tmp_path)
@@ -188,8 +220,9 @@ def test_common_phrase_seed_has_broad_unique_prompt_coverage(app, monkeypatch):
     records = json.loads(seed_path.read_text(encoding="utf-8"))
     english_prompts = [record["english"] for record in records]
 
-    assert len(records) >= 450
+    assert len(records) >= 2000
     assert len(english_prompts) == len(set(english_prompts))
+    assert len({prompt.casefold() for prompt in english_prompts}) == len(english_prompts)
     number_prompts = {
         record["english"]
         for record in records

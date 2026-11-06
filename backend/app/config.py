@@ -13,7 +13,8 @@ from dotenv import load_dotenv
 # Base directory for the backend
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Load .env from project root first, then backend root as fallback
+# Load Neon CLI's local env file first, then project and backend fallbacks.
+load_dotenv(BASE_DIR.parent / ".env.local")
 load_dotenv(BASE_DIR.parent / ".env")
 load_dotenv(BASE_DIR / ".env")
 
@@ -37,6 +38,11 @@ class Config:
     if SQLALCHEMY_DATABASE_URI.startswith("postgres://"):
         SQLALCHEMY_DATABASE_URI = SQLALCHEMY_DATABASE_URI.replace(
             "postgres://", "postgresql://", 1
+        )
+    # Keep using the declared psycopg2-binary driver across SQLAlchemy versions.
+    if SQLALCHEMY_DATABASE_URI.startswith("postgresql://"):
+        SQLALCHEMY_DATABASE_URI = SQLALCHEMY_DATABASE_URI.replace(
+            "postgresql://", "postgresql+psycopg2://", 1
         )
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False

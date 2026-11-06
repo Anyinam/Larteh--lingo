@@ -30,6 +30,10 @@ def populate_database(seed_directory: Optional[Path] = None) -> int:
     with app.app_context():
         db.create_all()
         seen_english: set[str] = set()
+        existing_english = {
+            english
+            for (english,) in db.session.query(Vocabulary.english).all()
+        }
         for file_path in seed_files:
             with open(file_path, "r", encoding="utf-8") as seed_file:
                 records = json.load(seed_file)
@@ -43,8 +47,9 @@ def populate_database(seed_directory: Optional[Path] = None) -> int:
                 if english in seen_english:
                     continue
                 seen_english.add(english)
-                if Vocabulary.query.filter_by(english=english).first() is not None:
+                if english in existing_english:
                     continue
+                existing_english.add(english)
 
                 db.session.add(
                     Vocabulary(
