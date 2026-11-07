@@ -286,6 +286,11 @@ The React frontend includes:
   `DATABASE_URL` and `DATABASE_URL_UNPOOLED` to the root `.env.local`; the Flask
   config loads that ignored file. Use the unpooled URL for schema migrations
   and seeding, and keep both URLs out of source control.
+- For the Docker-based frontend service, set the runtime environment variable
+  `BACKEND_URL` to the Flask API's base URL (for example,
+  `https://your-api.onrender.com`, without a trailing slash). Nginx expands
+  this at container startup and proxies `/api/` requests to that backend.
+  The Docker Compose default remains `http://backend:5000`.
 - Render's free web-service filesystem is ephemeral; it is not an authoritative
   archive and can be lost on redeploy/restart. Use private R2 for recordings
   and PostgreSQL for metadata. Confirm current Render and Cloudflare plan limits
